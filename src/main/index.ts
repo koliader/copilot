@@ -93,8 +93,15 @@ const helper = new SelectionHelper((m) => {
     if (m.action === 'quit') app.quit()
     else if (m.action === 'hotkeys_toggled') {
       selectionHotkeys = m.value === 'enabled'
-      helper.cancel(); sessionMgr.cancelRequest(); registerShortcuts()
-      sessionMgr.notice(selectionHotkeys ? 'Готов к выделению' : 'Горячие клавиши отключены')
+      // Keep the helper epoch in sync on both disable and enable.
+      helper.cancel()
+      if (!selectionHotkeys) {
+        sessionMgr.cancelRequest(true)
+        overlay?.hide()
+        sessionMgr.setStatus('overlay', { state: 'off', label: 'скрыт' })
+        sessionMgr.notice(null)
+      }
+      registerShortcuts()
     } else if (selectionHotkeys) {
       if (m.action === 'hide') overlay?.hide()
       if (m.action === 'cancel') { helper.cancel(); sessionMgr.cancelRequest(); overlay?.hide() }
@@ -453,7 +460,7 @@ async function beginRegion(): Promise<void> {
     applyWindowProtection()
     picker.on('closed', () => {
       picker = null
-      if (overlayWasVisible && !protectedOverlay) overlay?.showInactive()
+      if (overlayWasVisible && !protectedOverlay && selectionHotkeys) overlay?.showInactive()
     })
     picker.webContents.once('did-finish-load', () => {
       picker?.webContents.send('km:picker-init', { dataUrl, scale: display.scaleFactor, hasVision: !!registry.resolve('vision', s()), ocr: ocr.installed() })
@@ -461,7 +468,7 @@ async function beginRegion(): Promise<void> {
       picker?.focus()
     })
   } catch (e) {
-    if (overlayWasVisible && !protectedOverlay) overlay?.showInactive()
+    if (overlayWasVisible && !protectedOverlay && selectionHotkeys) overlay?.showInactive()
     sessionMgr.notice(e instanceof Error ? e.message : String(e))
   }
 }

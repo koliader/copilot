@@ -31,8 +31,8 @@ export function InputTab({ ctx }: { ctx: Ctx }) {
     <div className="row"><button className="btn" onClick={() => void patch({ selection: { prompt } })}>Сохранить промпт</button><button className="btn" onClick={() => setPrompt(DEFAULT_SELECTION_PROMPT)}>Исходный промпт</button></div>
     <label>Температура<input className="input" type="number" min="0" max="2" step="0.1" value={s.selection.temperature} onChange={e => void patch({ selection: { temperature: Number(e.target.value) } })}/></label>
     <label>Think (native Ollama)<select className="input" value={String(s.selection.think)} onChange={e => void patch({ selection: { think: e.target.value === 'null' ? null : e.target.value === 'true' } })}><option value="false">Выключен</option><option value="true">Включён</option><option value="null">По умолчанию модели</option></select></label>
+    <p>Общий таймаут включает загрузку модели и ожидание первого ответа Ollama.</p>
     <label>Общий таймаут, секунд<input className="input" type="number" value={s.selection.timeoutMs / 1000} onChange={e => void patch({ selection: { timeoutMs: Number(e.target.value) * 1000 } })}/></label>
-    <label>Таймаут подключения, секунд<input className="input" type="number" value={s.selection.connectTimeoutMs / 1000} onChange={e => void patch({ selection: { connectTimeoutMs: Number(e.target.value) * 1000 } })}/></label>
     <label>Символов в компактном ответе (0 — весь)<input className="input" type="number" value={s.selection.maxChars} onChange={e => void patch({ selection: { maxChars: Number(e.target.value) } })}/></label>
     <textarea className="input" placeholder="Проверка ручным вопросом без микрофона" value={typed} onChange={e => setTyped(e.target.value)}/>
     <button className="btn primary" disabled={!typed.trim()} onClick={() => void api.session.askTyped(typed).catch(e => setError(String(e)))}>Отправить вопрос</button>

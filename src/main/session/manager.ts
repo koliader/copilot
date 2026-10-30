@@ -125,10 +125,10 @@ export class SessionManager {
     this.d.emit()
   }
 
-  cancelRequest(): void {
+  cancelRequest(preserveAnswers = false): void {
     this.cancelAll()
-    this.board.setActive(null)
-    this.snap.answers = {}
+    this.board.cancel(preserveAnswers)
+    this.snap.answers = this.board.answers
     this.snap.state = this.textSession ? 'text_ready' : 'listening'
     this.d.emit()
   }

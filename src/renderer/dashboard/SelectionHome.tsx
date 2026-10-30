@@ -7,6 +7,7 @@ export function SelectionHome({ ctx, snap }: { ctx: Ctx; snap: AppSnapshot }) {
   const [answer, setAnswer] = useState('')
   const [error, setError] = useState('')
   useEffect(() => { setAnswer(snap.answers.deep?.text ?? snap.answers.say?.text ?? '') }, [snap.answers.deep?.text, snap.answers.say?.text])
+  const answerError = snap.answers.say?.error ?? snap.answers.deep?.error
   const run = async (fn: () => Promise<unknown>) => { try { await fn(); setError('') } catch (e) { setError(String(e)) } }
   return <div className="page col" style={{ gap: 16 }}>
     <h1>Выделенный текст</h1><p>Выделите текст в другой программе → нажмите и отпустите Ctrl. Микрофон и распознавание выключены.</p>
@@ -16,6 +17,7 @@ export function SelectionHome({ ctx, snap }: { ctx: Ctx; snap: AppSnapshot }) {
     <button className="btn primary" disabled={!question.trim() || snap.state === 'generating'} onClick={() => void run(() => api.session.askTyped(question))}>Отправить</button>
     <h2>Полный ответ</h2><textarea className="input" rows={10} value={answer} onChange={e => setAnswer(e.target.value)}/>
     <div className="row"><button className="btn" onClick={() => void run(() => api.copy(answer))}>Копировать весь ответ</button><button className="btn" onClick={() => void run(() => api.session.answerNow('deep'))}>Подробнее</button><button className="btn" onClick={() => void run(() => api.overlay.toggle())}>Показать / скрыть</button><button className="btn" onClick={() => void run(() => api.selection.showEdited(answer))}>Показать редактированный ответ</button><button className="btn" onClick={() => void run(() => api.selection.cancel())}>Отменить</button><button className="btn" onClick={() => void run(() => api.session.stop())}>Остановить</button></div>
+    {answerError && <div className="error">{answerError.message}{answerError.detail ? `: ${answerError.detail}` : ''}</div>}
     {error && <div className="error">{error}</div>}
   </div>
 }

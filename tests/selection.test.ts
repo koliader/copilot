@@ -56,3 +56,34 @@ it('reads a PowerShell UTF8 BOM settings file without losing the model', () => {
   const store = new SettingsStore(file, join(dir, 'providers.json'))
   expect(store.get().selection.target?.model).toBe('qwen3.5:9b')
 })
+
+// A slow first response is normal while a local model is loading.
+it('waits for model loading beyond the legacy connection timeout', async () => {
+  const signal = new AbortController().signal
+  const a = new OllamaAdapter({ cfg, apiKey: null, fetch: async (_url, init) => {
+    expect(init?.signal).toBe(signal)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(init?.signal?.aborted).toBe(false)
+    return new Response('{"response":"OK","done":true}\n')
+  } })
+  const chunks = []
+  for await (const c of a.stream({ ...req, selection: { ...req.selection, connectTimeoutMs: 1 } }, signal)) chunks.push(c)
+  expect(chunks[0]).toEqual({ type: 'text', text: 'OK' })
+})
+
+it.each(['http://127.0.0.1:11434', 'http://127.0.0.1:11434/', 'http://127.0.0.1:11434/v1', 'http://127.0.0.1:11434/v1/'])(
+  'uses /v1/chat/completions for ordinary requests with base %s', async baseUrl => {
+    const a = new OllamaAdapter({ cfg: { ...cfg, baseUrl }, apiKey: null, fetch: async (url) => {
+      expect(url).toBe('http://127.0.0.1:11434/v1/chat/completions')
+      return new Response('data: {"choices":[{"delta":{"content":"OK"}}]}\n\ndata: [DONE]\n\n')
+    } })
+    const chunks = []
+    for await (const c of a.stream({ ...req, selection: undefined }, new AbortController().signal)) chunks.push(c)
+    expect(chunks[0]).toEqual({ type: 'text', text: 'OK' })
+  }
+)
+
+it('preserves native Ollama HTTP errors for the UI', async () => {
+  const a = new OllamaAdapter({ cfg, apiKey: null, fetch: async () => new Response('{"error":"model missing"}', { status: 404 }) })
+  await expect(async () => { for await (const _ of a.stream(req, new AbortController().signal)) { void _ } }).rejects.toMatchObject({ appError: { code: 'not_found', status: 404 } })
+})

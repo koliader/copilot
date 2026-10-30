@@ -1,9 +1,13 @@
 import type { ChatRequest, StreamChunk } from '@shared/types'
 import type { AdapterDeps, ProviderAdapter } from './adapter'
 import { OpenAiAdapter } from './openai'
+import { fromHttp } from './errors'
 export class OllamaAdapter implements ProviderAdapter {
   private chat: OpenAiAdapter
-  constructor(private deps: AdapterDeps) { this.chat = new OpenAiAdapter(deps) }
+  constructor(private deps: AdapterDeps) {
+    const baseUrl = deps.cfg.baseUrl.replace(/\/+$/, '').replace(/\/v1$/, '') + '/v1'
+    this.chat = new OpenAiAdapter({ ...deps, cfg: { ...deps.cfg, baseUrl } })
+  }
   async listModels(signal?: AbortSignal) {
     const res = await this.deps.fetch(this.deps.cfg.baseUrl.replace(/\/v1\/?$/, '').replace(/\/$/, '') + '/api/tags', { signal })
     if (!res.ok) throw new Error('Ollama HTTP ' + res.status)
@@ -14,16 +18,14 @@ export class OllamaAdapter implements ProviderAdapter {
   async *stream(req: ChatRequest, signal: AbortSignal): AsyncIterable<StreamChunk> {
     if (!req.selection) { yield* this.chat.stream(req, signal); return }
     const sel = req.selection
-    const connect = new AbortController()
-    const timer = setTimeout(() => connect.abort(new Error('Connection timeout')), sel.connectTimeoutMs)
-    let res: Response
-    try {
-      res = await this.deps.fetch(this.deps.cfg.baseUrl.replace(/\/v1\/?$/, '').replace(/\/$/, '') + '/api/generate', {
-        method: 'POST', signal: AbortSignal.any([signal, connect.signal]), headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: req.model, prompt: sel.prompt + '\n\nТекст:\n' + sel.text, stream: true, options: { temperature: req.temperature }, ...(sel.think === null ? {} : { think: sel.think }) })
-      })
-    } finally { clearTimeout(timer) }
-    if (!res.ok || !res.body) throw new Error('Ollama HTTP ' + res.status)
+    // Ollama can send headers only after loading the model and evaluating the prompt.
+    // The runner's overall deadline covers this wait; it is not a connection timeout.
+    const res = await this.deps.fetch(this.deps.cfg.baseUrl.replace(/\/v1\/?$/, '').replace(/\/$/, '') + '/api/generate', {
+      method: 'POST', signal, headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: req.model, prompt: sel.prompt + '\n\nТекст:\n' + sel.text, stream: true, options: { temperature: req.temperature }, ...(sel.think === null ? {} : { think: sel.think }) })
+    })
+    if (!res.ok) throw fromHttp(res.status, await res.text(), res.headers)
+    if (!res.body) throw new Error('Empty Ollama response body')
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
     let buffer = '', answer = ''

@@ -18,6 +18,17 @@ export class AnswerBoard {
     this.owners = {}
   }
 
+  /** Revoke stream ownership while keeping displayed text available after hiding the overlay. */
+  cancel(preserveAnswers = false): void {
+    this.key = null
+    this.owners = {}
+    this.items = preserveAnswers
+      ? Object.fromEntries(Object.entries(this.items).map(([kind, answer]) => [
+          kind, answer.status === 'streaming' ? { ...answer, status: 'cancelled' } : answer
+        ]))
+      : {}
+  }
+
   isActive(questionId: string, revision: number): boolean {
     return this.key === `${questionId}#${revision}`
   }

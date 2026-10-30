@@ -256,3 +256,33 @@ it('can generate the same selection again after cancellation', async () => {
   await until(() => mgr.snap.answers.say?.status === 'done')
   expect(mgr.snap.state).toBe('answer_ready')
 })
+
+
+describe('silent hotkey pause', () => {
+  it('keeps the completed answer and accepts a new selection after resuming', async () => {
+    const { mgr, adapter } = setup()
+    mgr.submitSelection('First')
+    await until(() => mgr.snap.answers.say?.status === 'done')
+    const answer = mgr.snap.answers.say
+    mgr.cancelRequest(true)
+    expect(mgr.snap.answers.say).toEqual(answer)
+    expect(mgr.busy).toBe(false)
+    expect(mgr.submitSelection('Second')).toBe(true)
+    await until(() => mgr.snap.answers.say?.status === 'done')
+    expect(adapter.calls).toHaveLength(2)
+  })
+
+  it('cancels generation and rejects late output without clearing displayed text', async () => {
+    const { mgr } = setup({ delayMs: 20 })
+    mgr.submitSelection('First')
+    await until(() => !!mgr.snap.answers.say?.text)
+    const text = mgr.snap.answers.say!.text
+    mgr.cancelRequest(true)
+    expect(mgr.snap.answers.say?.status).toBe('cancelled')
+    expect(mgr.busy).toBe(false)
+    await sleep(150)
+    expect(mgr.snap.answers.say?.text).toBe(text)
+    expect(mgr.snap.answers.say?.status).toBe('cancelled')
+    expect(mgr.snap.state).toBe('text_ready')
+  })
+})
