@@ -14,8 +14,9 @@ import {
   shell,
   Tray
 } from 'electron'
+import { SelectionHelper } from './input/helper-client'
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
   AnswerKind,
@@ -52,18 +53,8 @@ import { SettingsStore } from './storage/settings'
 import { appIcon } from './util/png'
 import { createDashboard, createOverlay, createPicker, displayProtectionSupported, sanitizeBounds } from './windows/windows'
 
-app.setAppUserModelId('app.copilot')
-// I keep runtime data outside OneDrive/Cyrillic paths: whisper.cpp opens model files with ANSI APIs.
-// The app was renamed kairos-m → copilot; I move the old data folder once so settings and models carry over.
-const dataHome = app.getPath('appData')
-const newData = join(dataHome, 'copilot')
-const oldData = join(dataHome, 'kairos-m')
-try {
-  if (!existsSync(newData) && existsSync(oldData)) renameSync(oldData, newData)
-} catch {
-  // a locked file aborts the move; fall back to whichever folder exists
-}
-app.setPath('userData', existsSync(newData) ? newData : oldData)
+app.setAppUserModelId('app.copilot.selection')
+app.setPath('userData', join(app.getPath('appData'), 'copilot-selection'))
 // I key the lock by userData, so it has to come after setPath; app.quit() alone would leave this module
 // running, and a second instance would run migrations and mark the live session as interrupted.
 if (!app.requestSingleInstanceLock()) process.exit(0)
@@ -89,6 +80,45 @@ let picker: BrowserWindow | null = null
 let tray: Tray | null = null
 let quitting = false
 const shortcutConflicts: string[] = []
+let selectionHotkeys = true
+const helper = new SelectionHelper((m) => {
+  if (s().inputMode !== 'selection' || !sessionMgr) return
+  if (m.type === 'ready') { configureHelper(); sessionMgr.notice('Готов к выделению') }
+  else if (m.type === 'selection') {
+    if (!selectionHotkeys || sessionMgr.busy) return
+    if (!m.text?.trim()) { sessionMgr.notice('Нет выделенного текста'); return }
+    if (sessionMgr.submitSelection(m.text)) { showOverlay(); sessionMgr.notice(null) }
+  } else if (m.type === 'error') sessionMgr.notice('Не удалось прочитать выделение. Проверьте Windows helper.')
+  else if (m.type === 'command') {
+    if (m.action === 'quit') app.quit()
+    else if (m.action === 'hotkeys_toggled') {
+      selectionHotkeys = m.value === 'enabled'
+      helper.cancel(); sessionMgr.cancelRequest(); registerShortcuts()
+      sessionMgr.notice(selectionHotkeys ? 'Готов к выделению' : 'Горячие клавиши отключены')
+    } else if (selectionHotkeys) {
+      if (m.action === 'hide') overlay?.hide()
+      if (m.action === 'cancel') { helper.cancel(); sessionMgr.cancelRequest(); overlay?.hide() }
+      if (m.action === 'settings') { showDashboard(); dashboard?.webContents.send('km:navigate-input') }
+    }
+  }
+})
+function configureHelper(): void {
+  const exclude = [dashboard, overlay, picker].filter((w): w is BrowserWindow => !!w && !w.isDestroyed()).map((w) => {
+    const b = w.getNativeWindowHandle()
+    return (b.length >= 8 ? b.readBigUInt64LE() : BigInt(b.readUInt32LE())).toString()
+  })
+  helper.configure(s().inputMode === 'selection', exclude, s().selection.hotkeys, selectionHotkeys)
+}
+function startInput(): void {
+  if (s().inputMode === 'selection') {
+    if (process.platform === 'win32') {
+      const path = app.isPackaged ? join(process.resourcesPath, 'selection-helper', 'selection-helper.exe') : join(app.getAppPath(), 'resources/selection-helper/selection-helper/selection-helper.exe')
+      if (existsSync(path)) helper.start(path)
+      else sessionMgr.notice('Сначала соберите Windows helper: scripts/build-selection-helper.ps1')
+      configureHelper()
+    }
+  } else helper.stop()
+}
 
 function log(kind: string, data: unknown): void {
   try {
@@ -161,10 +191,15 @@ function updateLlmStatus(): void {
 
 function applySettings(prev: Settings | null): void {
   const st = s()
+  if (prev && prev.inputMode !== st.inputMode) {
+    helper.cancel(); stopSession(); asr.stop(); selectionHotkeys = true
+    startInput()
+  }
+  if (prev && JSON.stringify(prev.selection.hotkeys) !== JSON.stringify(st.selection.hotkeys)) configureHelper()
   guard.setOffline(st.offline)
   budget.update(st.budget, st.pricing)
   asr.setConfig(asrConfig())
-  if (!prev || JSON.stringify(prev.shortcuts) !== JSON.stringify(st.shortcuts)) registerShortcuts()
+  if (!prev || JSON.stringify(prev.shortcuts) !== JSON.stringify(st.shortcuts) || prev.inputMode !== st.inputMode || JSON.stringify(prev.selection.hotkeys) !== JSON.stringify(st.selection.hotkeys)) registerShortcuts()
   if (overlay && prev) {
     const o = st.overlay
     overlay.setAlwaysOnTop(o.pinned, 'screen-saver')
@@ -291,10 +326,12 @@ function afterStart(id: string, mode: 'practice' | 'live' | 'meeting'): string {
 }
 
 function startSession(mode: 'practice' | 'live' | 'meeting'): string {
+  if (s().inputMode === 'selection') { showOverlay(); return sessionMgr.startText() }
   return afterStart(sessionMgr.start({ mode }), mode)
 }
 
 function resumeSession(): string | null {
+  if (s().inputMode === 'selection') return sessionMgr.startText()
   const r = db.lastResumable()
   if (!r) return null
   return afterStart(sessionMgr.continuePrevious(db.sessionSegments(r.id), r.mode), r.mode)
@@ -323,6 +360,7 @@ function scheduleAsrIdleStop(): void {
 }
 
 function stopSession(): void {
+  helper.cancel()
   sessionMgr.stop()
   scheduleAsrIdleStop()
   dashboard?.webContents.send('km:capture', { action: 'stop' })
@@ -330,6 +368,7 @@ function stopSession(): void {
 }
 
 function toggleListen(): void {
+  if (s().inputMode === 'selection') { if (sessionMgr.active) stopSession(); else startSession('practice'); return }
   if (!sessionMgr.active) {
     startSession('live')
     return
@@ -345,6 +384,7 @@ function toggleListen(): void {
 }
 
 function panic(): void {
+  helper.cancel()
   sessionMgr.panic()
   asr.stop()
   dashboard?.webContents.send('km:capture', { action: 'stop' })
@@ -377,9 +417,10 @@ const SHORTCUT_ACTIONS: Record<ShortcutAction, () => void> = {
 /** I register OS hotkeys, not a keyboard hook, so nothing can leak if the app crashes (FR-O05). */
 function registerShortcuts(): void {
   globalShortcut.unregisterAll()
+  if (!selectionHotkeys) return
   shortcutConflicts.length = 0
   for (const [action, accel] of Object.entries(s().shortcuts) as [ShortcutAction, string][]) {
-    if (!accel) continue
+    if (!accel || (s().inputMode === 'selection' && [...Object.values(s().selection.hotkeys).map(k => k.replace(/ctrl/g, 'control')), 'escape'].includes(accel.toLowerCase()))) continue
     try {
       if (!globalShortcut.register(accel, SHORTCUT_ACTIONS[action])) shortcutConflicts.push(`${accel} (${action}) занято другой программой`)
     } catch {
@@ -577,12 +618,15 @@ function registerIpc(): void {
     return r
   })
 
+  handle('km:selection:showEdited', (text: string) => { sessionMgr.showEditedAnswer(text); showOverlay() })
+  handle('km:selection:cancel', () => { helper.cancel(); sessionMgr.cancelRequest(); overlay?.hide() })
   handle('km:session:start', (mode: 'practice' | 'live' | 'meeting') => startSession(mode))
   handle('km:session:resume', () => resumeSession())
   handle('km:session:stop', () => stopSession())
   handle('km:session:toggleListen', () => toggleListen())
   handle('km:session:answerNow', (kind?: AnswerKind) => sessionMgr.answerNow(kind ?? 'say', 'manual'))
   handle('km:session:askTyped', (text: string) => {
+    if (s().inputMode === 'selection') { if (sessionMgr.submitSelection(text)) showOverlay(); return }
     if (!sessionMgr.active) startSession('practice')
     sessionMgr.askTyped(text)
   })
@@ -764,6 +808,11 @@ app.whenReady().then(() => {
     db,
     profile,
     resolve: (role) => registry.resolve(role, s()),
+    resolveSelection: () => {
+      const target = s().selection.target
+      if (!target) return registry.resolve('quick_answer', s())
+      return registry.resolve('quick_answer', { ...s(), roles: { ...s().roles, quick_answer: target } })
+    },
     fallback: (role, exclude) => registry.fallback(role, exclude, s()),
     budget,
     newId: () => randomUUID(),
@@ -815,11 +864,13 @@ app.whenReady().then(() => {
   refreshTray()
   dashboard = makeDashboard()
   dashboard.setIcon(icon)
+  startInput()
 })
 
 app.on('second-instance', showDashboard)
 app.on('before-quit', () => {
   quitting = true
+  helper.stop()
   sessionMgr?.stop()
   asr?.stop()
   void ocr?.dispose()

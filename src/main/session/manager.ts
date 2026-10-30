@@ -15,6 +15,7 @@ import type {
   TranscriptSegment
 } from '@shared/types'
 import type { BudgetManager } from '../budget/budget'
+import { selectionPrompt } from '../context/selection-prompt'
 import { buildPrompt } from '../context/prompt'
 import { Bm25Index, type Chunk } from '../context/retrieval'
 import type { ProviderAdapter } from '../providers/adapter'
@@ -36,6 +37,7 @@ export interface SessionDeps {
   db: Db
   profile(): Profile
   resolve(role: ModelRole): ResolvedTarget | null
+  resolveSelection?(): ResolvedTarget | null
   fallback(role: ModelRole, excludeProviderId: string): ResolvedTarget | null
   budget: BudgetManager
   newId(): string
@@ -86,6 +88,50 @@ export class SessionManager {
   private index: Bm25Index | null = null
   private startedAt = 0
   private persist = true
+  private textSession = false
+
+  get busy(): boolean { return this.inflight.size > 0 }
+  get isTextSession(): boolean { return this.textSession }
+
+  startText(): string {
+    const id = this.start({ mode: 'practice' })
+    this.textSession = true
+    this.snap.listening = false
+    this.snap.state = 'text_ready'
+    this.d.emit()
+    return id
+  }
+
+  submitSelection(text: string): boolean {
+    if (typeof text !== 'string' || !text.trim() || text.length > 32000) throw new Error('Выделите от 1 до 32000 символов')
+    if (this.busy) { this.notice('Запрос выполняется'); return false }
+    if (!this.coord || !this.textSession) this.startText()
+    const dec = this.coord!.manual('selection', text)
+    if (dec.type !== 'new') return false
+    dec.question.trigger = 'selection'
+    this.applyQuestion(dec.question)
+    this.syncQuestions()
+    this.generate(dec.question, ['say'])
+    this.d.emit()
+    return true
+  }
+
+  showEditedAnswer(text: string): void {
+    if (typeof text !== 'string' || text.length > 2000000 || this.busy) throw new Error('Дождитесь ответа или отмените запрос')
+    const a = this.snap.answers.say
+    if (!a) return
+    this.board.apply({ ...a, text })
+    this.snap.answers = this.board.answers
+    this.d.emit()
+  }
+
+  cancelRequest(): void {
+    this.cancelAll()
+    this.board.setActive(null)
+    this.snap.answers = {}
+    this.snap.state = this.textSession ? 'text_ready' : 'listening'
+    this.d.emit()
+  }
   private answerUserSource = false
 
   constructor(private d: SessionDeps) {}
@@ -100,6 +146,7 @@ export class SessionManager {
 
   start(opts: SessionStartOptions): string {
     if (this.snap.sessionId) this.stop()
+    this.textSession = false
     const id = this.d.newId()
     const s = this.d.settings()
     this.persist = s.history && s.consent.history
@@ -150,6 +197,8 @@ export class SessionManager {
   stop(): void {
     if (!this.snap.sessionId) return
     this.cancelAll()
+    this.board.setActive(null)
+    this.snap.answers = {}
     if (this.persist) this.d.db.endSession(this.snap.sessionId)
     Object.assign(this.snap, { sessionId: null, state: 'stopped', listening: false, partial: {}, candidates: [] })
     // Capture statuses come from the renderer only while it captures; after stop nothing else would reset them, so I do it here.
@@ -226,6 +275,13 @@ export class SessionManager {
 
   answerNow(kind: AnswerKind = 'say', trigger: 'manual' | 'hotkey' = 'manual'): void {
     if (!this.coord) return
+    if (this.textSession && this.coord.active) {
+      if (!this.busy) {
+        this.board.setActive(this.coord.active.questionId, this.coord.active.revision)
+        this.generate(this.coord.active, [kind === 'deep' ? 'deep' : 'say'])
+      }
+      return
+    }
     if (kind === 'deep' && this.coord.active) {
       this.generate(this.coord.active, ['deep'])
       return
@@ -257,7 +313,7 @@ export class SessionManager {
     this.cancelAll()
     this.coord.clear()
     this.board.setActive(null)
-    this.snap.state = 'listening'
+    this.snap.state = this.textSession ? 'text_ready' : 'listening'
     this.syncQuestions()
     this.d.emit()
   }
@@ -368,7 +424,7 @@ export class SessionManager {
     onFirstToken?: () => void
   ): Promise<void> {
     const role: ModelRole = kind === 'deep' ? 'deep_answer' : kind === 'screen' && screen?.image ? 'vision' : 'quick_answer'
-    const initial = this.d.resolve(role) ?? (role === 'deep_answer' ? this.d.resolve('quick_answer') : null)
+    const initial = q.trigger === 'selection' ? (this.d.resolveSelection?.() ?? null) : this.d.resolve(role) ?? (role === 'deep_answer' ? this.d.resolve('quick_answer') : null)
     const answerId = this.d.newId()
     const base: AnswerEvent = {
       sessionId: q.sessionId,
@@ -422,7 +478,7 @@ export class SessionManager {
     }
     const windowStart = q.endMs - s.contextWindowMin * 60_000
     const knowledge: Chunk[] = this.index ? this.index.search(q.text, 8).map((r) => r.chunk) : []
-    const prompt = buildPrompt({
+    const prompt = q.trigger === 'selection' ? selectionPrompt(q.text, kind, s.selection) : buildPrompt({
       question: q.text,
       kind,
       profile,
@@ -475,7 +531,7 @@ export class SessionManager {
       try {
         const res = await runStream(
           target.adapter,
-          { model: target.model, messages: prompt.messages, maxTokens: prompt.maxTokens, temperature: prompt.temperature },
+          { model: target.model, messages: prompt.messages, maxTokens: prompt.maxTokens, temperature: prompt.temperature, ...(q.trigger === 'selection' ? { selection: { prompt: prompt.messages[0].content, text: q.text, think: s.selection.think, connectTimeoutMs: s.selection.connectTimeoutMs } } : {}) },
           ctrl.signal,
           {
             onFirstToken: (ms) => {
@@ -489,7 +545,7 @@ export class SessionManager {
               publish(ev)
             }
           },
-          { timeoutMs: target.cfg.timeoutMs }
+          { timeoutMs: q.trigger === 'selection' ? s.selection.timeoutMs : target.cfg.timeoutMs, ...(q.trigger === 'selection' ? { retries: 0, totalTimeoutMs: s.selection.timeoutMs } : {}) }
         )
         const cost = release(res.usage)
         ev = { ...ev, text: res.text, status: 'done', latencyMs: res.latencyMs, firstTokenMs: res.firstTokenMs, usage: res.usage, usageCostUsd: cost }
@@ -505,7 +561,7 @@ export class SessionManager {
           this.finish({ ...ev, text, status: this.board.isActive(q.questionId, q.revision) ? 'cancelled' : 'stale', error: err }, publish)
           return
         }
-        const candidate = !fellBack && !text && ['timeout', 'server', 'rate_limit', 'network'].includes(err.code) ? this.d.fallback(role, target.cfg.id) : null
+        const candidate = q.trigger !== 'selection' && !fellBack && !text && ['timeout', 'server', 'rate_limit', 'network'].includes(err.code) ? this.d.fallback(role, target.cfg.id) : null
         // I apply the cloud consent gate to the fallback too: a local failure must not leak CV and transcript to the cloud.
         const now = this.d.settings()
         const fb = candidate && (candidate.isLocal || (now.consent.cloud && !now.offline)) ? candidate : null
@@ -529,7 +585,7 @@ export class SessionManager {
 
   private finish(ev: AnswerEvent, publish: (ev: AnswerEvent) => void): void {
     publish(ev)
-    if (this.persist && ev.status !== 'stale') this.d.db.upsertAnswer(ev)
+    if (this.persist && this.board.isActive(ev.questionId, ev.revision) && ev.status !== 'stale') this.d.db.upsertAnswer(ev)
     this.inflight.delete(ev.answerId)
     if (this.board.isActive(ev.questionId, ev.revision) && ![...this.inflight.values()].some((f) => f.questionId === ev.questionId)) {
       this.snap.state = ev.status === 'error' || ev.status === 'blocked' ? 'error' : 'answer_ready'

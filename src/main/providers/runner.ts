@@ -16,6 +16,7 @@ export interface RunResult {
 
 export interface RunOptions {
   timeoutMs: number
+  totalTimeoutMs?: number
   retries?: number
   baseDelayMs?: number
   idleMs?: number
@@ -44,6 +45,7 @@ export async function runStream(adapter: ProviderAdapter, req: ChatRequest, sign
       timedOut = true
       ctrl.abort()
     }
+    const deadline = opts.totalTimeoutMs ? setTimeout(fire, opts.totalTimeoutMs) : undefined
     let timer = setTimeout(fire, opts.timeoutMs)
     // After the first token I turn the deadline into a stall timer: a stream that goes silent must not hold its slot forever.
     const idleMs = opts.idleMs ?? Math.max(opts.timeoutMs, 20_000)
@@ -88,6 +90,7 @@ export async function runStream(adapter: ProviderAdapter, req: ChatRequest, sign
       if (!isRetryable(err) || attempt === retries) throw new ProviderError(err)
       await sleep(Math.min(5000, err.retryAfterMs ?? (opts.baseDelayMs ?? 600) * 2 ** attempt))
     } finally {
+      clearTimeout(deadline)
       signal.removeEventListener('abort', onAbort)
     }
   }

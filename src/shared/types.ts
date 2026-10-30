@@ -16,6 +16,7 @@ export interface TranscriptSegment {
 export type UtteranceKind = 'question' | 'follow_up' | 'statement' | 'small_talk' | 'coding_task' | 'screen_reference' | 'unknown'
 
 export type ConvState =
+  | 'text_ready'
   | 'idle'
   | 'listening'
   | 'partial_transcript'
@@ -28,7 +29,7 @@ export type ConvState =
   | 'stopped'
   | 'error'
 
-export type QuestionTrigger = 'auto' | 'manual' | 'hotkey' | 'typed'
+export type QuestionTrigger = 'auto' | 'manual' | 'hotkey' | 'typed' | 'selection'
 export type QuestionStatus = 'candidate' | 'confirmed' | 'superseded' | 'answered' | 'dismissed'
 
 export interface QuestionEvent {
@@ -140,6 +141,7 @@ export interface ChatRequest {
   messages: ChatMessage[]
   maxTokens: number
   temperature: number
+  selection?: { prompt: string; text: string; think: boolean | null; connectTimeoutMs: number }
 }
 export type StreamChunk = { type: 'text'; text: string } | { type: 'usage'; inputTokens: number; outputTokens: number }
 
@@ -197,7 +199,20 @@ export interface Consent {
   acceptedAt: number | null
 }
 
+export interface SelectionSettings {
+  hotkeys: { send: string; settings: string; toggle: string; quit: string }
+  prompt: string
+  temperature: number
+  think: boolean | null
+  timeoutMs: number
+  connectTimeoutMs: number
+  maxChars: number
+  target: RoleTarget | null
+}
 export interface Settings {
+  schemaVersion: number
+  inputMode: 'selection' | 'voice'
+  selection: SelectionSettings
   onboarded: boolean
   uiLang: UiLang
   answerLang: 'auto' | Lang

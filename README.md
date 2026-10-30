@@ -1,3 +1,13 @@
+# Copilot Selection
+
+Форк с вводом выделенного текста по одиночному Ctrl и отдельным голосовым режимом.
+
+[Запуск, сборка и статус реализации](docs/fork/IMPLEMENTATION.md) · [Подробный план](docs/fork/PLAN.md)
+
+Для установки одним файлом используйте сгенерированный `release/install.ps1`: он включает исходники, собирает приложение и устанавливает Ollama с моделью. Запуск: `powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1`. Требуются Windows x64, интернет и winget. Для разработки `npm run dist` теперь собирает и helper, и приложение.
+
+---
+
 # Copilot
 
 [![CI](https://github.com/Magerko/copilot/actions/workflows/ci.yml/badge.svg)](https://github.com/Magerko/copilot/actions/workflows/ci.yml)

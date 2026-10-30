@@ -14,8 +14,8 @@ const STEPS = ['Язык', 'Звук', 'Распознавание', 'Модел
 export function Onboarding({ ctx, asr }: { ctx: Ctx; asr: AsrStatus | null }) {
   const [step, setStep] = useState(0)
   const started = useState(() => Date.now())[0]
-  const next = () => setStep((s) => Math.min(STEPS.length - 1, s + 1))
-  const back = () => setStep((s) => Math.max(0, s - 1))
+  const next = () => setStep((s) => ctx.settings.inputMode === 'selection' ? (s === 0 ? 3 : s === 3 ? 5 : s === 5 ? 6 : 6) : Math.min(STEPS.length - 1, s + 1))
+  const back = () => setStep((s) => ctx.settings.inputMode === 'selection' ? (s === 6 ? 5 : s === 5 ? 3 : 0) : Math.max(0, s - 1))
   // I take capture consent from the user's explicit «Далее» on the audio step, for exactly the sources left switched on; «Пропустить» grants nothing.
   const accept = async () => {
     if (step === 1) await ctx.patch({ consent: { mic: ctx.settings.audio.captureMic, system: ctx.settings.audio.captureSystem } })
@@ -44,7 +44,7 @@ export function Onboarding({ ctx, asr }: { ctx: Ctx; asr: AsrStatus | null }) {
           ))}
         </div>
         <div className="onb-body">
-          {step === 0 && <StepLang ctx={ctx} />}
+          {step === 0 && <><select className="input" value={ctx.settings.inputMode} onChange={e => void ctx.patch({ inputMode: e.target.value as 'selection' | 'voice' })}><option value="selection">Выделенный текст + Ctrl</option><option value="voice">Голос</option></select><StepLang ctx={ctx} /></>}
           {step === 1 && <StepAudio ctx={ctx} />}
           {step === 2 && <StepAsr ctx={ctx} asr={asr} />}
           {step === 3 && <StepModel ctx={ctx} />}
@@ -82,7 +82,7 @@ function StepLang({ ctx }: { ctx: Ctx }) {
     <div className="col" style={{ gap: 16 }}>
       <h1>{t('Добро пожаловать в Copilot')}</h1>
       <p className="muted" style={{ margin: 0 }}>
-        Помощник слушает разговор, вовремя замечает вопрос и показывает короткий ответ с опорой на ваше резюме. Распознавание речи — на этом компьютере, модель
+        Помощник принимает выделенный текст по Ctrl или слушает разговор, замечает вопрос и показывает короткий ответ с опорой на ваше резюме. Распознавание речи — на этом компьютере, модель
         для ответов вы выбираете сами.
       </p>
       <div className="grid2">

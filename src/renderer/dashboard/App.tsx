@@ -5,6 +5,7 @@ import { CaptureController } from '../lib/audio'
 import { useAsrFeed, useSettingsFeed, useSnapshot } from '../lib/hooks'
 import { setLang, t } from '../lib/i18n'
 import { History } from './History'
+import { SelectionHome } from './SelectionHome'
 import { Home } from './Home'
 import { Live } from './Live'
 import { Onboarding } from './Onboarding'
@@ -26,6 +27,7 @@ export function App() {
   const [sub, setSub] = useState<string | undefined>()
   const snap = useSnapshot(init?.snapshot ?? null)
   const [settings, setSettings] = useSettingsFeed(init?.settings ?? null)
+  useEffect(() => km.onInputSettings(() => { setPage('settings'); setSub('input') }), [])
   const asr = useAsrFeed(init?.asr ?? null)
   const capture = useRef(new CaptureController())
   const settingsRef = useRef<Settings | null>(null)
@@ -115,7 +117,8 @@ export function App() {
         </div>
       </aside>
       <main className="main scroll">
-        {page === 'home' && <Home ctx={ctx} snap={snap} />}
+        {page === 'home' && settings.inputMode === 'selection' && <SelectionHome ctx={ctx} snap={snap} />}
+        {page === 'home' && settings.inputMode === 'voice' && <Home ctx={ctx} snap={snap} />}
         {page === 'live' && <Live ctx={ctx} snap={snap} />}
         {page === 'history' && <History />}
         {page === 'profile' && <ProfilePage ctx={ctx} />}

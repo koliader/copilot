@@ -1,14 +1,16 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { AppSnapshot, AsrStatus, DiagReport, ShortcutAction } from '@shared/types'
 import { api } from '../../lib/api'
 import { useAsync } from '../../lib/hooks'
 import type { Ctx } from '../App'
 import { pretty } from '../Home'
 import { ErrorText, fmtDate, Section, Toggle } from '../ui'
+import { InputTab } from './InputTab'
 import { AudioTab } from './AudioTab'
 import { ProvidersTab } from './Providers'
 
 const TABS = [
+  ['input', 'Ввод'],
   ['providers', 'Провайдеры'],
   ['audio', 'Речь и звук'],
   ['overlay', 'Подсказки'],
@@ -20,6 +22,7 @@ const TABS = [
 
 export function SettingsPage({ ctx, snap, asr, tab }: { ctx: Ctx; snap: AppSnapshot; asr: AsrStatus | null; tab?: string }) {
   const [cur, setCur] = useState<string>(tab ?? 'providers')
+  useEffect(() => { if (tab) setCur(tab) }, [tab])
   return (
     <div className="page col" style={{ gap: 16 }}>
       <h1>Настройки</h1>
@@ -30,6 +33,7 @@ export function SettingsPage({ ctx, snap, asr, tab }: { ctx: Ctx; snap: AppSnaps
           </button>
         ))}
       </nav>
+      {cur === 'input' && <InputTab ctx={ctx} />}
       {cur === 'providers' && <ProvidersTab ctx={ctx} />}
       {cur === 'audio' && <AudioTab ctx={ctx} asr={asr} />}
       {cur === 'overlay' && <OverlayTab ctx={ctx} snap={snap} />}

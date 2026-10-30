@@ -1,7 +1,12 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import type { DeepPartial, ProviderConfig, Settings } from '@shared/types'
 
+import { DEFAULT_SELECTION_PROMPT } from '@shared/selection'
+
 export const DEFAULT_SETTINGS: Settings = {
+  schemaVersion: 1,
+  inputMode: 'selection',
+  selection: { hotkeys: { send: 'ctrl', settings: 'ctrl+alt+s', toggle: 'ctrl+alt+x', quit: 'ctrl+alt+u' }, prompt: DEFAULT_SELECTION_PROMPT, temperature: 0, think: false, timeoutMs: 300000, connectTimeoutMs: 5000, maxChars: 300, target: null },
   onboarded: false,
   uiLang: 'ru',
   answerLang: 'auto',
@@ -24,7 +29,7 @@ export const DEFAULT_SETTINGS: Settings = {
     toggleOverlay: 'Control+Alt+H',
     toggleListen: 'Control+Alt+L',
     answerNow: 'Control+Alt+Enter',
-    snapRegion: 'Control+Alt+S',
+    snapRegion: 'Control+Alt+P',
     scrollUp: 'Control+Alt+Up',
     scrollDown: 'Control+Alt+Down',
     expand: 'Control+Alt+E',
@@ -75,7 +80,17 @@ export class SettingsStore {
     private settingsPath: string,
     private providersPath: string
   ) {
-    this.current = deepMerge(DEFAULT_SETTINGS, readJson<DeepPartial<Settings>>(settingsPath) ?? undefined)
+    let saved: DeepPartial<Settings> | undefined
+    if (existsSync(settingsPath)) {
+      // Refuse damaged/future files instead of silently replacing the user's settings.
+      saved = JSON.parse(readFileSync(settingsPath, 'utf8').replace(/^\uFEFF/, ''))
+      if (!saved || typeof saved !== 'object' || Array.isArray(saved) || (saved.schemaVersion ?? 0) > 1) throw new Error('Неподдерживаемый файл настроек')
+      if (!saved.schemaVersion) {
+        copyFileSync(settingsPath, settingsPath + '.pre-selection.bak')
+        saved = { ...saved, schemaVersion: 1, inputMode: 'voice' }
+      }
+    }
+    this.current = deepMerge(DEFAULT_SETTINGS, saved)
     this.providerList = readJson<ProviderConfig[]>(providersPath) ?? []
   }
 
@@ -84,8 +99,18 @@ export class SettingsStore {
   }
 
   patch(p: DeepPartial<Settings>): Settings {
-    this.current = deepMerge(this.current, p)
-    writeJson(this.settingsPath, this.current)
+    const next = deepMerge(this.current, p)
+    const v = next.selection
+    const keys = Object.values(v.hotkeys)
+    if (keys.length !== 4 || new Set(keys).size !== 4 || keys.some(k => typeof k !== 'string' || !/^[a-z0-9 ]+(\+[a-z0-9 ]+)*$/.test(k) || k.includes('esc'))) throw new Error('Некорректные или повторяющиеся клавиши')
+    if (!['selection', 'voice'].includes(next.inputMode) || next.schemaVersion !== 1 || typeof v.prompt !== 'string' || !v.prompt.trim() || v.prompt.length > 32000 ||
+        !Number.isFinite(v.temperature) || v.temperature < 0 || v.temperature > 2 ||
+        !Number.isFinite(v.timeoutMs) || v.timeoutMs < 1000 || v.timeoutMs > 3600000 ||
+        !Number.isFinite(v.connectTimeoutMs) || v.connectTimeoutMs < 100 || v.connectTimeoutMs > 120000 ||
+        !Number.isInteger(v.maxChars) || v.maxChars < 0 || v.maxChars > 32000 ||
+        ![true, false, null].includes(v.think)) throw new Error('Некорректные настройки ввода')
+    writeJson(this.settingsPath, next)
+    this.current = next
     return this.current
   }
 

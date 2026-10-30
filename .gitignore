@@ -1,3 +1,7 @@
+.helper-venv/
+resources/selection-helper/
+build/helper/
+__pycache__/
 node_modules/
 out/
 dist/

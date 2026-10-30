@@ -69,6 +69,7 @@ function setup(opts: { local?: boolean; cloudConsent?: boolean; delayMs?: number
     db,
     profile: () => profile,
     resolve: () => target,
+    resolveSelection: () => target,
     fallback: () => cloudTarget,
     // Default limits on purpose: maxConcurrent=2 is what exposed the abort/slot race.
     budget: new BudgetManager(settings.budget, {}, { now: Date.now, spentTodayBefore: () => 0 }),
@@ -212,4 +213,46 @@ describe('SessionManager', () => {
     expect(mgr.snap.answers.say?.text).toContain('четыре')
     expect(mgr.snap.state).toBe('answer_ready')
   })
+})
+
+describe('selection sessions', () => {
+  it('runs one request without audio or interview prompt', async () => {
+    const { mgr, adapter } = setup()
+    mgr.submitSelection('Wie spät ist es?')
+    expect(mgr.snap.listening).toBe(false)
+    await until(() => mgr.snap.answers.say?.status === 'done')
+    expect(adapter.calls).toHaveLength(1)
+    expect(mgr.snap.answers.points).toBeUndefined()
+    expect(mgr.snap.activeQuestion?.trigger).toBe('selection')
+    expect(adapter.calls[0].selection?.text).toBe('Wie spät ist es?')
+    expect(adapter.calls[0].messages[0].content).not.toContain('first person')
+  })
+  it('does not queue while busy and invalidates cancelled answers', async () => {
+    const { mgr, adapter } = setup({ delayMs: 30 })
+    mgr.submitSelection('First')
+    expect(mgr.submitSelection('Second')).toBe(false)
+    mgr.cancelRequest()
+    await sleep(150)
+    expect(mgr.snap.answers).toEqual({})
+    expect(mgr.snap.state).toBe('text_ready')
+    expect(adapter.calls).toHaveLength(1)
+    mgr.submitSelection('Third')
+    await until(() => mgr.snap.answers.say?.status === 'done')
+    expect(adapter.calls).toHaveLength(2)
+  })
+  it('does not send selection to a fallback cloud provider', async () => {
+    const { mgr, cloud } = setup({ failLocal: true, cloudConsent: true })
+    mgr.submitSelection('Question')
+    await until(() => mgr.snap.answers.say?.status === 'error')
+    expect(cloud.calls).toHaveLength(0)
+  })
+})
+
+it('can generate the same selection again after cancellation', async () => {
+  const { mgr } = setup({ delayMs: 20 })
+  mgr.submitSelection('Question')
+  mgr.cancelRequest()
+  mgr.answerNow()
+  await until(() => mgr.snap.answers.say?.status === 'done')
+  expect(mgr.snap.state).toBe('answer_ready')
 })

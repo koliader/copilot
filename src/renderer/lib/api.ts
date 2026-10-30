@@ -17,6 +17,7 @@ import type {
 } from '@shared/types'
 
 interface Bridge {
+  onInputSettings(cb: () => void): () => void
   invoke<T>(channel: string, ...args: unknown[]): Promise<T>
   onSnapshot(cb: (s: AppSnapshot) => void): () => void
   onSettings(cb: (s: Settings) => void): () => void
@@ -76,6 +77,7 @@ export const api = {
     models: (id: string, refresh = false) => call<ModelInfo[]>('km:providers:models', id, refresh),
     test: (id: string, model: string | null) => call<ProviderTestReport>('km:providers:test', id, model)
   },
+  selection: { showEdited: (text: string) => call<void>('km:selection:showEdited', text), cancel: () => call<void>('km:selection:cancel') },
   session: {
     start: (mode: 'practice' | 'live' | 'meeting') => call<string>('km:session:start', mode),
     resume: () => call<string | null>('km:session:resume'),

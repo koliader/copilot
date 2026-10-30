@@ -9,6 +9,7 @@ const COMPACT_MIN = 120
 const COMPACT_MAX = 440
 
 const STATE_LABEL: Partial<Record<ConvState, string>> = {
+  text_ready: 'Готов к выделению',
   listening: 'Слушаю…',
   partial_transcript: 'Слушаю…',
   question_candidate: 'Возможный вопрос',
@@ -104,7 +105,7 @@ export function Overlay() {
     <div className={`ov ${expanded ? 'expanded' : ''}`}>
       <header className="ov-head">
         <span className={`dot ${snap.listening ? (snap.state === 'generating' ? 'busy' : 'ok') : snap.sessionId ? 'warn' : ''}`} />
-        <span className="ov-state">{t(STATE_LABEL[snap.state] ?? (q ? 'Вопрос' : 'Слушаю…'))}</span>
+        <span className="ov-state">{t(STATE_LABEL[snap.state] ?? (q ? 'Вопрос' : settings.inputMode === 'selection' ? 'Готов к выделению' : 'Слушаю…'))}</span>
         {snap.status.protection.state === 'ok' && (
           <span className="ov-shield" title={snap.status.protection.label}>
             ◈
@@ -176,7 +177,7 @@ export function Overlay() {
               {!q && live && <div className="ov-q faint">{live}</div>}
               {say?.text ? (
                 <div className="ov-say">
-                  {say.kind === 'screen' ? <Markdown text={say.text} /> : say.text}
+                  {say.kind === 'screen' ? <Markdown text={say.text} /> : (q?.trigger === 'selection' && !expanded && settings.selection.maxChars > 0 && say.text.length > settings.selection.maxChars ? say.text.slice(0, settings.selection.maxChars) + '…' : say.text)}
                   {say.status === 'streaming' && <span className="caret" />}
                 </div>
               ) : q && (a.say?.status === 'streaming' || snap.state === 'generating') ? (
@@ -208,7 +209,7 @@ export function Overlay() {
               {snap.notice && <div className="ov-note">{snap.notice}</div>}
               {!q && !live && !snap.candidates.length && snap.sessionId && (
                 <div className="faint ov-hint">
-                  Жду вопрос. <kbd>{settings.shortcuts.answerNow.replace('Control', 'Ctrl')}</kbd> — ответить сразу.
+                  {settings.inputMode === 'selection' ? 'Выделите текст и отпустите Ctrl.' : <>Жду вопрос. <kbd>{settings.shortcuts.answerNow.replace('Control', 'Ctrl')}</kbd> — ответить сразу.</>}
                 </div>
               )}
               {!snap.sessionId && <div className="faint ov-hint">{t('Сессия не запущена')}</div>}
